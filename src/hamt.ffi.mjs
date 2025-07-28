@@ -674,27 +674,19 @@ function find(node, key) {
       // If we've reached an empty node without finding anything then we're done
       // and just return null.
       return NOT_FOUND;
-    } else if (node.type === COLLISION) {
-      // If we get to a collision node we first check that the hashes match: if
-      // they do not, then we're sure the key cannot possibly be in the tree.
-      // Otherwise we'll have to check all colliding pairs until we find one
-      // with the key we're looking for.
-      if (keyHash !== node.hash) return NOT_FOUND;
-      for (let i = 0; i < node.pairs.length; i++) {
-        let [conflictingKey, value] = node.pairs[i];
-        if (isEqual(key, conflictingKey)) return { value };
-      }
-      return NOT_FOUND;
     } else if (node.type === ARRAY) {
       // Array nodes are indexed by the hash fragment of `FRAGMENT_SIZE` bits
       // starting at the given offset. We use it know which branch we should go
       // down to.
       const fragment = hashFragment(shift, keyHash);
       node = node.children[fragment];
-      if (node === undefined) {
+      if (node === undefined || node === EMPTY_NODE) {
         return NOT_FOUND;
+      } else if (node.type === undefined && isEqual(key, node.key)) {
+        return { value: node.value };
+      } else {
+        shift += FRAGMENT_SIZE;
       }
-      shift += FRAGMENT_SIZE;
     } else if (node.type === PACKED) {
       // A node indexed by a bitmap: we have to move down the tree until we find
       // a leaf node. So how do we decide where to go based on the fragment of
@@ -716,16 +708,32 @@ function find(node, key) {
         // for the key we're looking for, in that case we just return `null` as
         // there's no relevant child to go down to.
         return NOT_FOUND;
-      } else {
-        // Otherwise the index of the child is given by the number of bits that are
-        // less significant than the indexed one and are set to 1.
-        //
-        // `mask - 1` is creating a bitmask of all 1s that is getting all the bits
-        // to the right of the indexed one.
-        let childIndex = popCount(node.bitmap & (mask - 1));
-        shift += FRAGMENT_SIZE;
-        node = node.children[childIndex];
       }
+      // Otherwise the index of the child is given by the number of bits that are
+      // less significant than the indexed one and are set to 1.
+      //
+      // `mask - 1` is creating a bitmask of all 1s that is getting all the bits
+      // to the right of the indexed one.
+      const childIndex = popCount(node.bitmap & (mask - 1));
+      node = node.children[childIndex];
+      if (node === EMPTY_NODE) {
+        return NOT_FOUND;
+      } else if (node.type === undefined && isEqual(key, node.key)) {
+        return { value: node.value };
+      } else {
+        shift += FRAGMENT_SIZE;
+      }
+    } else if (node.type === COLLISION) {
+      // If we get to a collision node we first check that the hashes match: if
+      // they do not, then we're sure the key cannot possibly be in the tree.
+      // Otherwise we'll have to check all colliding pairs until we find one
+      // with the key we're looking for.
+      if (keyHash !== node.hash) return NOT_FOUND;
+      for (let i = 0; i < node.pairs.length; i++) {
+        const [conflictingKey, value] = node.pairs[i];
+        if (isEqual(key, conflictingKey)) return { value };
+      }
+      return NOT_FOUND;
     } else {
       // If we're at a leaf node then we've found our possible value, it's a
       // match if the keys are the same.
@@ -736,33 +744,6 @@ function find(node, key) {
       // comparison.
       return isEqual(key, node.key) ? { value: node.value } : NOT_FOUND;
     }
-  }
-}
-
-/**
- * Given a packed node's bitmap and a fragment returns the index of the relevant
- * child, if any. Returns `null` if there's no child for the given fragment!
- *
- * @param {number} bitmap
- * @param {number} fragment
- * @returns {number | null}
- */
-function bitmapChildIndex(bitmap, fragment) {
-  // We take the bit at the index specified by the fragment.
-  const mask = 1 << fragment;
-  const childBit = bitmap & mask;
-  if (childBit === 0) {
-    // If the bit is not set in the bitmap it means there's no key-value pair
-    // for the key we're looking for, in that case we just return `null` as
-    // there's no relevant child to go down to.
-    return null;
-  } else {
-    // Otherwise the index of the child is given by the number of bits that are
-    // less significant than the indexed one and are set to 1.
-    //
-    // `mask - 1` is creating a bitmask of all 1s that is getting all the bits
-    // to the right of the indexed one.
-    return popCount(bitmap & (mask - 1));
   }
 }
 
